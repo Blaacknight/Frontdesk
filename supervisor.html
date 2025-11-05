@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Supervisor Panel</title>
+    <style>
+        :root {
+            --background: #f4f7f6;
+            --text: #333;
+            --card-bg: #ffffff;
+            --shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+            --border-radius: 12px;
+            --primary: #007aff;
+            --primary-hover: #0056b3;
+            --green: #34c759;
+            --green-light: #e0f8e5;
+            --orange: #ff9500;
+            --orange-light: #fff3e0;
+            --red: #ff453a;
+            --red-light: #ffebe9;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--background);
+            color: var(--text);
+            margin: 0;
+            padding: 24px;
+        }
+
+        main {
+            max-width: 900px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 24px;
+        }
+
+        h1 {
+            font-size: 28px;
+            font-weight: 700;
+            grid-column: 1 / -1; /* Span both columns */
+            margin-bottom: 0;
+        }
+
+        .request-column {
+            background-color: var(--card-bg);
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow);
+            padding: 24px;
+            align-self: flex-start; /* Prevent columns from stretching */
+        }
+
+        .request-column h2 {
+            font-size: 20px;
+            font-weight: 600;
+            margin-top: 0;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 12px;
+        }
+
+        .request-card {
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+
+        .request-card-resolved {
+            background-color: #f9f9f9;
+        }
+
+        .request-card p {
+            margin: 0 0 12px 0;
+            line-height: 1.5;
+        }
+
+        .request-card strong {
+            color: #555;
+            font-weight: 600;
+        }
+
+        .request-card .tag {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .tag-pending {
+            color: var(--orange);
+            background-color: var(--orange-light);
+        }
+        
+        .tag-timeout { /* For timeout handling */
+            color: var(--red);
+            background-color: var(--red-light);
+        }
+
+        .tag-resolved {
+            color: var(--green);
+            background-color: var(--green-light);
+        }
+
+        .request-card textarea {
+            width: 100%;
+            box-sizing: border-box; /* Ensures padding doesn't affect width */
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            font-family: inherit;
+            font-size: 14px;
+            margin-bottom: 12px;
+            min-height: 80px;
+            resize: vertical;
+        }
+
+        .request-card button {
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            padding: 10px 16px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        .request-card button:hover {
+            background-color: var(--primary-hover);
+        }
+        
+        .request-card button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+
+        .placeholder-text {
+            color: #777;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+
+    <main>
+        <h1>AI Supervisor Panel</h1>
+
+        <!-- Column for Pending Requests -->
+        <div class="request-column">
+            <h2>Pending Requests</h2>
+            <div id="pending-requests-list">
+                <p class="placeholder-text">No pending requests. Listening...</p>
+            </div>
+        </div>
+
+        <!-- Column for Resolved Requests -->
+        <div class="request-column">
+            <h2>Recently Resolved</h2>
+            <div id="resolved-requests-list">
+                <p class="placeholder-text">No resolved requests yet.</p>
+            </div>
+        </div>
+    </main>
+
+    <!-- Import Firebase SDKs -->
+    <script type="module">
+        // Import the functions you need from the SDKs you need
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+        import {
+            getFirestore,
+            collection,
+            query,
+            where,
+            onSnapshot,
+            doc,
+            updateDoc,
+            addDoc,
+            serverTimestamp
+        } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+        // --- THIS IS YOUR FIREBASE CONFIG --- //
+        const firebaseConfig = {
+            apiKey: "AIzaSyAhsGf_rsJkEmL-ny4m-0Na0jM2IEsMZ3Y",
+            authDomain: "frontdesk-hitl-demo.firebaseapp.com",
+            projectId: "frontdesk-hitl-demo",
+            storageBucket: "frontdesk-hitl-demo.firebasestorage.app",
+            messagingSenderId: "94873211261",
+            appId: "1:94873211261:web:88c8455a082ad19d167c14",
+            measurementId: "G-D3RJR96N01"
+        };
+        // ------------------------------------ //
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        console.log("Firebase Initialized. Connecting to Firestore...");
+
+        // Get DOM elements
+        const pendingList = document.getElementById('pending-requests-list');
+        const resolvedList = document.getElementById('resolved-requests-list');
+
+        // --- 1. Listen for PENDING requests ---
+        // We query for 'pending' OR 'unresolved_timeout' statuses to show them all in this queue.
+        const pendingQuery = query(collection(db, "help_requests"), where("status", "in", ["pending", "unresolved_timeout"]));
+        onSnapshot(pendingQuery, (snapshot) => {
+            if (snapshot.empty) {
+                pendingList.innerHTML = '<p class="placeholder-text">No pending requests. Listening...</p>';
+                return;
+            }
+            
+            pendingList.innerHTML = ''; // Clear the list
+            snapshot.forEach(doc => {
+                const request = doc.data();
+                const requestId = doc.id;
+                
+                // Choose tag style based on status
+                const tagClass = request.status === 'pending' ? 'tag-pending' : 'tag-timeout';
+                const tagText = request.status === 'unresolved_timeout' ? 'Timed Out' : request.status;
+
+                // Create the card
+                const card = document.createElement('div');
+                card.className = 'request-card';
+                card.innerHTML = `
+                    <p><span class="tag ${tagClass}">${tagText}</span></p>
+                    <p><strong>Customer Query:</strong></p>
+                    <p>"${request.customerQuery}"</p>
+                    <textarea 
+                        id="response-${requestId}" 
+                        placeholder="Type supervisor response here..."
+                    ></textarea>
+                    <button class="resolve-btn" data-id="${requestId}" data-query="${request.customerQuery}">
+                        Resolve
+                    </button>
+                `;
+                pendingList.appendChild(card);
+            });
+        }, (error) => {
+            console.error("Error listening for pending requests:", error);
+            pendingList.innerHTML = `<p class="placeholder-text">Error loading requests. Check console.</p>`;
+        });
+
+        // --- 2. Listen for RESOLVED requests ---
+        const resolvedQuery = query(collection(db, "help_requests"), where("status", "==", "resolved"));
+        onSnapshot(resolvedQuery, (snapshot) => {
+            if (snapshot.empty) {
+                resolvedList.innerHTML = '<p class="placeholder-text">No resolved requests yet.</p>';
+                return;
+            }
+
+            resolvedList.innerHTML = ''; // Clear the list
+            snapshot.forEach(doc => {
+                const request = doc.data();
+                
+                // Create the card
+                const card = document.createElement('div');
+                card.className = 'request-card request-card-resolved';
+                card.innerHTML = `
+                    <p><span class="tag tag-resolved">${request.status}</span></p>
+                    <p><strong>Query:</strong> "${request.customerQuery}"</p>
+                    <p><strong>Answer:</strong> "${request.supervisorResponse}"</p>
+                `;
+                resolvedList.prepend(card); // Add new resolved to the top
+            });
+        }, (error) => {
+            console.error("Error listening for resolved requests:", error);
+            resolvedList.innerHTML = `<p class="placeholder-text">Error loading requests. Check console.</p>`;
+        });
+
+
+        // --- 3. Handle the "Resolve" button click ---
+        document.addEventListener('click', async (e) => {
+            if (e.target && e.target.classList.contains('resolve-btn')) {
+                const button = e.target;
+                const requestId = button.dataset.id;
+                const customerQuery = button.dataset.query;
+                const responseText = document.getElementById(`response-${requestId}`).value;
+
+                if (!responseText) {
+                    showCustomAlert('Please provide a response before resolving.');
+                    return;
+                }
+
+                // Disable button to prevent double-click
+                button.disabled = true;
+                button.textContent = 'Resolving...';
+
+                try {
+                    // This is the core logic
+                    await resolveHelpRequest(requestId, customerQuery, responseText);
+                    
+                    // The onSnapshot listener will automatically remove the card from "Pending"
+                    console.log(`Successfully resolved request ${requestId}`);
+
+                } catch (error) {
+                    console.error("Failed to resolve request:", error);
+                    showCustomAlert(`Failed to resolve request. Check console for details.`);
+                    // Re-enable button on failure
+                    button.disabled = false;
+                    button.textContent = 'Resolve';
+                }
+            }
+        });
+
+        /**
+         * Core function to handle the 3-step resolution process.
+         * 1. Update the help_request to 'resolved'
+         * 2. Create a new 'knowledge_base' entry
+         * 3. Simulate the text-back to the customer
+         */
+        async function resolveHelpRequest(requestId, customerQuery, responseText) {
+            console.log(`Resolving request: ${requestId}`);
+            const helpRequestRef = doc(db, "help_requests", requestId);
+            const knowledgeBaseCol = collection(db, "knowledge_base");
+
+            // 1. Update the help_request status
+            console.log("Step 1: Updating help_request...");
+            await updateDoc(helpRequestRef, {
+                status: "resolved",
+                supervisorResponse: responseText,
+                resolvedAt: serverTimestamp()
+            });
+            console.log("Step 1: Complete.");
+
+            // 2. Create a new knowledge_base entry
+            // In a real app, you might want to check if an identical query already exists
+            console.log("Step 2: Creating knowledge_base entry...");
+            await addDoc(knowledgeBaseCol, {
+                query: customerQuery,
+                answer: responseText,
+                createdAt: serverTimestamp(),
+                sourceRequestId: requestId // Link back to the original request
+            });
+            console.log("Step 2: Complete.");
+
+            // 3. Simulate texting the user back (fulfills project constraint)
+            console.log("Step 3: Simulating text-back...");
+            // In a real app, we'd get the customer's phone number from a 'customers' collection
+            console.log(`
+                -------------------------------------------
+                SIMULATED TEXT-BACK: (Fulfills constraint)
+                To: Customer (e.g., +15551234567)
+                Body: "Hi! You asked: '${customerQuery}' Our supervisor responded: '${responseText}'"
+                -------------------------------------------
+            `);
+            console.log("Step 3: Complete.");
+        }
+
+        /**
+         * Shows a simple, non-blocking alert message.
+         * Replaces the native alert() function which is bad UX.
+         */
+        function showCustomAlert(message) {
+            let alertBox = document.getElementById('custom-alert');
+            if (!alertBox) {
+                alertBox = document.createElement('div');
+                alertBox.id = 'custom-alert';
+                alertBox.style = `
+                    position: fixed;
+                    top: 20px;
+                    left: 50%;
+                    transform: translateX(-50%);
+                    background-color: var(--red);
+                    color: white;
+                    padding: 16px 24px;
+                    border-radius: 8px;
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+                    font-weight: 600;
+                    z-index: 1000;
+                    opacity: 0;
+                    transition: opacity 0.3s ease, top 0.3s ease;
+                `;
+                document.body.appendChild(alertBox);
+            }
+            
+            alertBox.textContent = message;
+            alertBox.style.opacity = '1';
+            alertBox.style.top = '30px';
+
+            // Hide after 3 seconds
+            setTimeout(() => {
+                alertBox.style.opacity = '0';
+                alertBox.style.top = '20px';
+            }, 3000); 
+        }
+
+    </script>
+</body>
+</html>
+

@@ -1,0 +1,14 @@
+# Virtual environment
+venv/
+__pycache__/
+*.pyc
+
+# Firebase & credentials
+serviceAccountKey.json
+
+# Environment variables
+.env
+
+# LiveKit secrets
+*.key
+*.secret
